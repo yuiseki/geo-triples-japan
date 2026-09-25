@@ -23,11 +23,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # name is exactly what this is here to surface.
 DIGESTS = {
     "triples.parquet":
-        "b328cc3f74de45f6cfc481a3eea08c81e874fbb7dac5aca493d9c87de3266eae",
+        "166306db21e522d31f253e1cbd3608d3147eab7e8e2a4afc17ee53c25f7babe2",
     "cpt.parquet":
-        "0f89293d96df260994a007d2150af828b20e20fc16085f5483dcbbe3ff75b582",
+        "8f25008a77c97463ddc4e2dc35e3bb7e498409f51d73978e3ebbb84147168b46",
     "probe.parquet":
-        "8b862790a9a1e2a0ea51595bf47427e7986f285d0674d8afcd7c2804fdfa9d5b",
+        "a79915187f853fc6d737a5c91d34b565298e168ad30d227bf361ea1a61048a67",
 }
 
 WRITER = "pyarrow 20.0.0"

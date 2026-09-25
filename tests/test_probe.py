@@ -12,9 +12,20 @@ cpt, and the set must not silently become something else.
 """
 import collections
 
+import build
+
 EXPECTED = {
     "place-in-municipality": 66541,
     "municipality-in-prefecture": 1484,
+}
+
+# The municipality level is entirely train. The split is over places only,
+# because holding out a municipality takes every sentence about every place
+# inside it: 23.9% of the corpus to buy 142 questions.
+EXPECTED_SPLIT = {
+    "place-in-municipality train": 59885,
+    "place-in-municipality eval": 6656,
+    "municipality-in-prefecture train": 1484,
 }
 
 
@@ -23,6 +34,13 @@ def test_counts(probe, manifest):
     assert dict(by_level) == EXPECTED
     assert manifest["probe"]["by_level"] == dict(by_level)
     assert manifest["probe"]["rows"] == len(probe)
+
+
+def test_the_split_is_the_size_it_says(probe, manifest):
+    counts = collections.Counter(
+        f"{r['level']} {r['split']}" for r in probe)
+    assert dict(counts) == EXPECTED_SPLIT
+    assert manifest["probe"]["by_level_and_split"] == dict(counts)
 
 
 def test_one_row_per_child(probe):
@@ -48,6 +66,64 @@ def test_every_answer_is_stated_in_the_corpus(probe, cpt):
     missing = [r for r in probe
                if (r["child_id"], r["parent_id"]) not in stated]
     assert missing == []
+
+
+def test_the_split_holds_in_both_directions(probe, cpt):
+    """The whole reason the split exists, checked as an invariant.
+
+    A train question must have its fact in the part of the corpus a run
+    trains on, or a score on it is not recall of anything. An eval question
+    must have its fact nowhere in that part, or the score is recall wearing
+    the word generalisation.
+
+    Both directions matter and only one of them is obvious. The first version
+    of the split marked a question eval when its subject was held out and left
+    it train when its parent was, and questions whose fact had never been
+    trained were counted as recall.
+    """
+    trained = {(r["subject_id"], r["object_id"])
+               for r in cpt if not r["holdout"]}
+    for r in probe:
+        pair = (r["child_id"], r["parent_id"])
+        if r["split"] == "train":
+            assert pair in trained, r
+        else:
+            assert pair not in trained, r
+
+
+def test_a_held_out_feature_is_absent_from_training_entirely(probe, cpt):
+    """Not just absent as a subject: absent.
+
+    A place named in passing is still taught. If 金閣寺 were held out but
+    "京都市には金閣寺がある" stayed in the training half, the model would have
+    read the answer in the other direction and the eval score would measure
+    nothing.
+
+    The held-out set is recomputed here from the rule the card states rather
+    than read off the split column, so this also checks that the column is
+    what it claims. It cannot be taken from the eval rows: a row is eval when
+    either of its features is held out, and the other one is usually an
+    ordinary trained municipality.
+    """
+    held_out = {i for i in
+                {r["child_id"] for r in probe} | {r["parent_id"] for r in probe}
+                if i.split("-")[0] == "poi" and build.is_eval(i)}
+    assert held_out, "the rule held nothing out"
+    seen = set()
+    for r in cpt:
+        if r["holdout"]:
+            continue
+        seen.add(r["subject_id"])
+        seen.add(r["object_id"])
+        if r["via_id"]:
+            seen.add(r["via_id"])
+    leaked = sorted(held_out & seen)[:5]
+    assert not leaked, leaked
+
+    # And the column agrees with the rule.
+    for r in probe:
+        want = "eval" if {r["child_id"], r["parent_id"]} & held_out else "train"
+        assert r["split"] == want, r
 
 
 def test_the_english_half_is_the_smaller_one(probe, manifest):

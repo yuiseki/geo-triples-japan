@@ -59,7 +59,7 @@ DISJOINT_MATRIX = "FF2FF1212"
 # after the tool that made it. 4 when the named places arrived and with them
 # the kind columns, because a pair is no longer always two areas. A reader who
 # has an older file can tell from this field alone.
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 
 
 def read_relations(path):
@@ -315,7 +315,24 @@ def statements(triple, iris):
     ]
 
 
-def cpt_rows(triples, iris, labels):
+# The layers that are administrative units rather than things inside them.
+# A row is `admin` when every feature it names is one of these.
+#
+# The division is here so that a run can take the hierarchy without the
+# 80,748 places. A 0.6B model memorising every shrine and school in Japan is
+# not the first thing to find out; whether it can hold 1,740 municipalities
+# and their prefectures is, and that is a corpus two orders smaller.
+ADMIN_LAYERS = ("jp-country", "jp-pref", "jp-muni")
+
+
+def topic_of(triple, layer_of):
+    named = [triple["subject_layer"], triple["object_layer"]]
+    if triple["via_id"]:
+        named.append(layer_of.get(triple["via_id"], ""))
+    return "admin" if all(l in ADMIN_LAYERS for l in named) else "place"
+
+
+def cpt_rows(triples, iris, labels, held_out=(), layer_of=None):
     """Every true triple, in each form it can be written in.
 
     The N-Triples form is unconditional, so the row count per form is a
@@ -347,6 +364,13 @@ def cpt_rows(triples, iris, labels):
                 # triple behind it without a join back to the other table.
                 "certification": t["certification"],
                 "certificate": t["certificate"],
+                # True when any feature this row names is held out. A row that
+                # mentions a held-out place in passing still teaches it, so
+                # the whole row goes, not just the ones it is the subject of.
+                "holdout": bool(
+                    held_out & {t["subject_id"], t["object_id"],
+                                t["via_id"] or ""}),
+                "topic": topic_of(t, layer_of or {}),
             })
     # A total key. subject, predicate and object do not separate a composed
     # row from the observation it agrees with, and nor does derivation
@@ -430,6 +454,46 @@ LEVELS = {
 NOT_A_QUESTION = {("jp-pref", "jp-country")}
 
 
+# One feature in ten is held out, chosen by its own id so that the split is
+# the same wherever it is computed and does not depend on the order anything
+# was read in.
+#
+# The split is over features, not over rows. Holding out rows would leave the
+# same place named in a dozen other sentences, and a model that had seen
+# "金閣寺は京都市に含まれる" in one form would be asked it in another. Held
+# out here means the feature is not in the training corpus at all.
+#
+# Only the places. Holding out a municipality as well takes every sentence
+# about every place inside it, which cost 23.9% of the corpus to buy 142
+# questions, and the municipality level has 1,484 questions in total.
+#
+# What the eval half can show is narrower than it sounds, and worth saying
+# plainly: a place that never appears in training cannot be recalled from it.
+# Two things can still move. A model may learn the naming rule, since 39% of
+# these places carry their municipality inside their own name, and that rule
+# transfers to places it has never seen. And a model that has merely learnt
+# to answer with a plausible municipality will move both halves together,
+# which is how this half earns its keep: it is the control that says a rise
+# in the other one is the facts going in.
+EVAL_SHARE = 10
+EVAL_LAYERS = ("jp-poi",)
+
+
+def is_eval(feature_id):
+    digest = hashlib.sha256(feature_id.encode("utf-8")).hexdigest()
+    return int(digest, 16) % EVAL_SHARE == 0
+
+
+def eval_features(triples):
+    """The ids held out of training, and the layers they come from."""
+    out = set()
+    for t in triples:
+        for side in ("subject", "object"):
+            if t[side + "_layer"] in EVAL_LAYERS and is_eval(t[side + "_id"]):
+                out.add(t[side + "_id"])
+    return out
+
+
 def probe_rows(triples, labels, by_id):
     """The question "which parent does this place have", per level.
 
@@ -490,6 +554,20 @@ def bare_en(name):
         if name and name.endswith(suffix):
             return name[:-len(suffix)]
     return name
+
+
+def mark_split(rows, held_out):
+    """Which side of the split each question is on.
+
+    A question is eval when either of its two features is held out, not only
+    its subject. If the parent were held out and the child were not, the fact
+    would be missing from training while the question claimed to be a recall
+    question, and the number would mean neither thing.
+    """
+    for r in rows:
+        r["split"] = ("eval" if {r["child_id"], r["parent_id"]} & held_out
+                      else "train")
+    return rows
 
 
 def mark_leaks(rows):
@@ -675,8 +753,9 @@ def main():
     triples.sort(key=lambda t: (t["subject_id"], t["predicate"],
                                 t["object_id"], t["derivation"],
                                 t["via_id"] or ""))
-    cpt = cpt_rows(triples, iris, labels)
-    probe = probe_rows(triples, labels, by_id)
+    held_out = eval_features(triples)
+    cpt = cpt_rows(triples, iris, labels, held_out, layer_of)
+    probe = mark_split(probe_rows(triples, labels, by_id), held_out)
     layer_features = {s["layer"]: s["features"] for s in oracle["sources"]}
 
     os.makedirs(a.out, exist_ok=True)
@@ -753,11 +832,27 @@ def main():
             "characters_by_form": {
                 f: sum(len(r["text"]) for r in cpt if r["form"] == f)
                 for f in vocab.FORMS},
+            "by_topic": dict(collections.Counter(r["topic"] for r in cpt)),
+            "by_topic_and_form": {
+                f"{topic} {form}": n for (topic, form), n
+                in sorted(collections.Counter(
+                    (r["topic"], r["form"]) for r in cpt).items())},
+            "held_out_rows": sum(1 for r in cpt if r["holdout"]),
+            "held_out_features": len(held_out),
+            "holdout_rule": (
+                f"one feature in {EVAL_SHARE} of {' and '.join(EVAL_LAYERS)}, "
+                "chosen by sha256 of its id. A row is held out when it names "
+                "any of them, in any position"),
             "sha256": digest(os.path.join(a.out, "cpt.parquet")),
         },
         "probe": {
             "rows": len(probe),
             "by_level": dict(collections.Counter(r["level"] for r in probe)),
+            "by_split": dict(collections.Counter(r["split"] for r in probe)),
+            "by_level_and_split": {
+                f"{level} {split}": n for (level, split), n
+                in sorted(collections.Counter(
+                    (r["level"], r["split"]) for r in probe).items())},
             "answerable_ja": sum(1 for r in probe
                                  if r["child_ja"] and r["parent_ja"]),
             "answerable_en": sum(1 for r in probe
@@ -787,11 +882,20 @@ def main():
     print(f"{len(cpt):,} cpt rows, {manifest['cpt']['characters']:,} characters")
     for k in vocab.FORMS:
         print(f"    {k:12} {manifest['cpt']['by_form'].get(k, 0):8,}")
+    print(f"{len(cpt):,} cpt rows, {manifest['cpt']['characters']:,} characters"
+          if False else "", end="")
+    for k, n in sorted(manifest["cpt"]["by_topic_and_form"].items()):
+        print(f"    {k:22} {n:9,}")
+    print(f"{manifest['cpt']['held_out_rows']:,} cpt rows held out of "
+          f"training ({manifest['cpt']['held_out_rows'] / len(cpt):.1%}), "
+          f"naming {len(held_out):,} features")
     print(f"{len(probe):,} probe questions "
           f"({manifest['probe']['answerable_ja']:,} answerable in Japanese)")
     for k, n in sorted(manifest["probe"]["by_level"].items()):
-        print(f"    {k:18} {n:6,}  "
+        print(f"    {k:28} {n:6,}  "
               f"1 in {manifest['probe']['candidates'][k]:,}")
+    for k, n in sorted(manifest["probe"]["by_level_and_split"].items()):
+        print(f"      {k:34} {n:6,}")
     print(f"licence: {oracle['licence']['name']}")
     return 0
 
@@ -849,6 +953,7 @@ CPT_FIELDS = (
     ("derivation", "string"), ("via_id", "string"),
     ("de9im", "string"), ("rcc8", "string"),
     ("certification", "string"), ("certificate", "string"),
+    ("holdout", "bool"), ("topic", "string"),
 )
 
 PROBE_FIELDS = (
@@ -860,6 +965,7 @@ PROBE_FIELDS = (
     ("child_layer", "string"), ("parent_layer", "string"),
     ("rcc8", "string"),
     ("answer_in_child_ja", "bool"), ("answer_in_child_en", "bool"),
+    ("split", "string"),
 )
 
 TRIPLE_COLUMNS = tuple(n for n, _ in TRIPLE_FIELDS)

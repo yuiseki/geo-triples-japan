@@ -261,6 +261,23 @@ The text is layered, and each layer takes the triple as its input:
 | `ja` | 1,848,010 | 92,417,828 | 50.0 |
 | `en` | 777,216 | 82,836,889 | 106.6 |
 
+A `holdout` column marks the rows that name a held-out place, and a `topic`
+column says whether a row is about the administrative hierarchy alone or
+about the places inside it. A training run filters on both; everything else
+reads the table whole.
+
+| `topic` | `ja` | `en` | `ntriples` |
+|---|---:|---:|---:|
+| `admin` | 39,126 | 39,126 | 58,246 |
+| `place` | 1,808,884 | 738,090 | 1,995,438 |
+
+`admin` is the whole hierarchy without the things inside it: 47 prefectures,
+1,740 municipalities, which of them border which, and the country. 1,180,982
+characters of Japanese, about 850,000 tokens. It is there because "can a 0.6B
+model hold 1,740 municipalities and their prefectures" is a question worth
+answering before "can it hold every shrine in Japan", and the two corpora
+differ by two orders of magnitude.
+
 The N-Triples form is unconditional, which is the point: the coverage gap is
 a missing `ja` row beside a present `ntriples` row, visible by counting,
 rather than a choice made silently during the build. The IRIs are the ones
@@ -360,13 +377,42 @@ does not exist. Until this dataset that question was the generalisation probe,
 asked about places no corpus here mentioned. Now a corpus states it, which
 changes what a score on it means, and the next paragraph says how.
 
-**Every answer in this subset is stated in `cpt`.** It measures whether
-training put these facts into a model, not whether the model generalises to
-places outside the corpus. A number from it is a recall number and should be
-reported as one. The set is here, rather than in a separate repository,
-because pretending to independence it does not have would be worse than
-saying this: it comes from the same triples, the same revision and the same
-digest as everything else, so there is one thing to pin.
+### The split, and what it can and cannot show
+
+One place in ten is held out, chosen by the sha256 of its own id. Every `cpt`
+row that names a held-out place is marked `holdout`, in any position, so a
+training run that filters on that column has never seen the place at all.
+408,356 rows, 8.7% of the corpus, name one of the 8,121 held-out places.
+
+| level | train | eval |
+|---|---:|---:|
+| `place-in-municipality` | 59,885 | 6,656 |
+| `municipality-in-prefecture` | 1,484 | 0 |
+
+A question is `eval` when either of its two features is held out, not only its
+subject: a parent held out and a child not would be a question whose fact was
+never trained, counted as recall.
+
+The municipality level is entirely train. The split is over places only,
+because holding out a municipality takes every sentence about every place
+inside it, and that cost 23.9% of the corpus to buy 142 questions.
+
+**The train half is a recall measurement.** Every answer in it is stated in
+the part of `cpt` a run trains on. A rise says the facts went in, and nothing
+more than that.
+
+**The eval half is a control, not a hope.** A place that never appears in
+training cannot be recalled from it, and nobody should expect it to be. Two
+things can still move it, and both are worth knowing. A model may learn the
+naming rule, since 39% of these places carry their municipality inside their
+own name, and that rule transfers to places it has never seen. And a model
+that has merely learnt to answer with a plausible municipality moves both
+halves together, which is how this half earns its keep: it is what says a
+rise in the other one is the facts going in rather than the shape of an
+answer.
+
+The four numbers to read are therefore train and eval, each with and without
+the name leak. Only one of them is expected to move.
 
 `jp-pref` inside `jp-country` is in the triples and not in the probe. There
 is one country in this graph, so "which country is 東京都 in" has one
@@ -476,9 +522,9 @@ because this is a country and not a city.
 
 | file | sha256 |
 |---|---|
-| `triples.parquet` | `b328cc3f74de45f6cfc481a3eea08c81e874fbb7dac5aca493d9c87de3266eae` |
-| `cpt.parquet` | `0f89293d96df260994a007d2150af828b20e20fc16085f5483dcbbe3ff75b582` |
-| `probe.parquet` | `8b862790a9a1e2a0ea51595bf47427e7986f285d0674d8afcd7c2804fdfa9d5b` |
+| `triples.parquet` | `166306db21e522d31f253e1cbd3608d3147eab7e8e2a4afc17ee53c25f7babe2` |
+| `cpt.parquet` | `8f25008a77c97463ddc4e2dc35e3bb7e498409f51d73978e3ebbb84147168b46` |
+| `probe.parquet` | `a79915187f853fc6d737a5c91d34b565298e168ad30d227bf361ea1a61048a67` |
 
 The oracle is run without `--normalize snap`. That flag adds three columns
 this build does not read, and nothing else, but it changes the digest of
