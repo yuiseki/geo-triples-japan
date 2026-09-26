@@ -271,6 +271,26 @@ reads the table whole.
 | `admin` | 39,126 | 39,126 | 58,246 |
 | `place` | 1,808,884 | 738,090 | 1,995,438 |
 
+A `pair` column says which two layers a row is about, `jp-muni>jp-pref` and
+so on, so a run can take one rung of the hierarchy. It is there because the
+first attempt to train on `admin` learnt the majority sentence instead of the
+facts, and the majority sentence is not what anyone wants:
+
+| predicate | rows | characters |
+|---|---:|---:|
+| `sfDisjoint` | 17,780 | 834,712 (70.7%) |
+| `sfTouches` | 12,060 | 174,736 |
+| `sfContains` | 4,640 | 78,823 |
+| `sfWithin` | 4,640 | 92,555 (7.8%) |
+
+Seven tenths of the Japanese `admin` text is "A and B do not meet", because
+every composed disjointness is one sentence and there are a great many pairs
+that do not meet. A model trained on it answered 接していない to everything,
+which is what the corpus mostly says. Within `admin`, the 1,740 facts that
+answer "which prefecture" are 3,480 rows and 42,908 characters once the
+country rung and the other predicates are filtered out, and they are reached
+with `pair` and `predicate` together.
+
 `admin` is the whole hierarchy without the things inside it: 47 prefectures,
 1,740 municipalities, which of them border which, and the country. 1,180,982
 characters of Japanese, about 850,000 tokens. It is there because "can a 0.6B
@@ -523,7 +543,7 @@ because this is a country and not a city.
 | file | sha256 |
 |---|---|
 | `triples.parquet` | `166306db21e522d31f253e1cbd3608d3147eab7e8e2a4afc17ee53c25f7babe2` |
-| `cpt.parquet` | `8f25008a77c97463ddc4e2dc35e3bb7e498409f51d73978e3ebbb84147168b46` |
+| `cpt.parquet` | `919a7ebf572f8c50f34a9501c108b2a0b9cc6edbf1d75f6134e31b18def01796` |
 | `probe.parquet` | `a79915187f853fc6d737a5c91d34b565298e168ad30d227bf361ea1a61048a67` |
 
 The oracle is run without `--normalize snap`. That flag adds three columns

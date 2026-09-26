@@ -371,6 +371,13 @@ def cpt_rows(triples, iris, labels, held_out=(), layer_of=None):
                     held_out & {t["subject_id"], t["object_id"],
                                 t["via_id"] or ""}),
                 "topic": topic_of(t, layer_of or {}),
+                # Which two layers the row is about, so that a run can take
+                # one rung of the hierarchy. Without it the only way to train
+                # on municipalities and prefectures alone is to filter on the
+                # id prefixes by hand, and the country rung is 38% of the
+                # containment sentences: every municipality is in Japan, so a
+                # model that learns only that has learnt the majority answer.
+                "pair": f"{t['subject_layer']}>{t['object_layer']}",
             })
     # A total key. subject, predicate and object do not separate a composed
     # row from the observation it agrees with, and nor does derivation
@@ -833,6 +840,8 @@ def main():
                 f: sum(len(r["text"]) for r in cpt if r["form"] == f)
                 for f in vocab.FORMS},
             "by_topic": dict(collections.Counter(r["topic"] for r in cpt)),
+            "by_pair": dict(collections.Counter(
+                r["pair"] for r in cpt if r["form"] == "ja")),
             "by_topic_and_form": {
                 f"{topic} {form}": n for (topic, form), n
                 in sorted(collections.Counter(
@@ -953,7 +962,7 @@ CPT_FIELDS = (
     ("derivation", "string"), ("via_id", "string"),
     ("de9im", "string"), ("rcc8", "string"),
     ("certification", "string"), ("certificate", "string"),
-    ("holdout", "bool"), ("topic", "string"),
+    ("holdout", "bool"), ("topic", "string"), ("pair", "string"),
 )
 
 PROBE_FIELDS = (

@@ -25,7 +25,7 @@ DIGESTS = {
     "triples.parquet":
         "166306db21e522d31f253e1cbd3608d3147eab7e8e2a4afc17ee53c25f7babe2",
     "cpt.parquet":
-        "8f25008a77c97463ddc4e2dc35e3bb7e498409f51d73978e3ebbb84147168b46",
+        "919a7ebf572f8c50f34a9501c108b2a0b9cc6edbf1d75f6134e31b18def01796",
     "probe.parquet":
         "a79915187f853fc6d737a5c91d34b565298e168ad30d227bf361ea1a61048a67",
 }
